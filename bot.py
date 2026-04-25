@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+import sys
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -14,13 +15,19 @@ from content import load_items
 
 load_dotenv()
 
+LOG_FILE = Path(__file__).parent / "log.txt"
+STATE_FILE = Path(__file__).parent / "state.json"
+
+_log_fmt = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+_file_handler = logging.FileHandler(LOG_FILE)
+_file_handler.setFormatter(_log_fmt)
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
+    handlers=[logging.StreamHandler(), _file_handler],
 )
 logger = logging.getLogger(__name__)
-
-STATE_FILE = Path(__file__).parent / "state.json"
 
 
 def load_state() -> dict:
@@ -30,7 +37,9 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    tmp.replace(STATE_FILE)
 
 
 def pick_item(items: list[dict], state: dict) -> dict:
@@ -61,7 +70,7 @@ async def daily_post(context: ContextTypes.DEFAULT_TYPE) -> None:
     text = format_message(item)
     posted_to = []
 
-    for channel_id in list(state["channels"]):
+    for channel_id in state["channels"]:
         try:
             await context.bot.send_message(chat_id=channel_id, text=text, parse_mode="HTML")
             posted_to.append(channel_id)
@@ -74,7 +83,7 @@ async def daily_post(context: ContextTypes.DEFAULT_TYPE) -> None:
             "posted_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         })
         save_state(state)
-        logger.info("Posted '%s' to %d channel(s).", item["id"], len(posted_to))
+        logger.info("Posted '%s' to %d channel(s): %s", item["id"], len(posted_to), text)
 
 
 async def track_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -90,11 +99,11 @@ async def track_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if chat_id not in state["channels"]:
             state["channels"].append(chat_id)
             logger.info("Added to chat %s (%s).", member.chat.title, chat_id)
+            save_state(state)
     elif status in ("left", "kicked"):
         state["channels"] = [c for c in state["channels"] if c != chat_id]
         logger.info("Removed from chat %s (%s).", member.chat.title, chat_id)
-
-    save_state(state)
+        save_state(state)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -107,25 +116,38 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text("/start - Introduction\n/help - Show this message\n/test - Send a test post to all channels now")
 
 
-async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def broadcast_test(bot) -> tuple[int, int]:
     state = load_state()
     if not state["channels"]:
-        await update.message.reply_text("No channels registered.")
-        return
+        logger.info("No channels registered; skipping test post.")
+        return 0, 0
 
     item = pick_item(load_items(), state)
-    text = "test " + format_message(item)
+    text = f"<i>[test]</i> {format_message(item)}"
     sent, failed = 0, 0
 
-    for channel_id in list(state["channels"]):
+    for channel_id in state["channels"]:
         try:
-            await context.bot.send_message(chat_id=channel_id, text=text, parse_mode="HTML")
+            await bot.send_message(chat_id=channel_id, text=text, parse_mode="HTML")
             sent += 1
         except Exception as e:
             logger.error("Test send failed for %s: %s", channel_id, e)
             failed += 1
 
-    await update.message.reply_text(f"Test post sent to {sent} channel(s){f', {failed} failed' if failed else ''}.")
+    logger.info("Test post sent to %d channel(s): %s", sent, text)
+    return sent, failed
+
+
+async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    sent, failed = await broadcast_test(context.bot)
+    if sent == 0 and failed == 0:
+        await update.message.reply_text("No channels registered.")
+    else:
+        await update.message.reply_text(f"Test post sent to {sent} channel(s){f', {failed} failed' if failed else ''}.")
+
+
+async def startup_test(context: ContextTypes.DEFAULT_TYPE) -> None:
+    await broadcast_test(context.bot)
 
 
 def main() -> None:
@@ -135,7 +157,10 @@ def main() -> None:
 
     post_time_str = os.getenv("DAILY_POST_TIME", "09:00")
     post_tz = ZoneInfo(os.getenv("DAILY_POST_TZ", "America/Los_Angeles"))
-    hour, minute = map(int, post_time_str.split(":"))
+    try:
+        hour, minute = map(int, post_time_str.split(":"))
+    except ValueError:
+        raise ValueError(f"DAILY_POST_TIME must be in HH:MM format, got: {post_time_str!r}")
 
     app = Application.builder().token(token).build()
 
@@ -148,6 +173,10 @@ def main() -> None:
         daily_post,
         time=datetime.time(hour=hour, minute=minute, tzinfo=post_tz),
     )
+
+    if "--test" in sys.argv:
+        app.job_queue.run_once(startup_test, when=1)
+        logger.info("--test flag detected; sending test post on startup.")
 
     logger.info("Bot started. Daily post scheduled at %s %s.", post_time_str, post_tz)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
