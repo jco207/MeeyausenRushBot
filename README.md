@@ -28,7 +28,7 @@ python3 bot.py
 
 Add the bot to a Telegram channel as an **administrator**. It will automatically register the channel and begin posting daily. Removing the bot from a channel removes it from the rotation.
 
-Send `/test` in a **private chat with the bot** (not inside a channel) to immediately push a test post to all registered channels. Bots cannot receive messages sent inside a channel, so the command must come from a DM. Test posts are prefixed with `[test]` and are not recorded in history.
+Send `/test` in a **private chat with the bot** (not inside a channel) to immediately push a test post (fact or video) to all registered channels. Send `/test_video` to force a video link specifically. Bots cannot receive messages sent inside a channel, so commands must come from a DM. Test posts are prefixed with `[test]` or `[test-video]` and are not recorded in history.
 
 To trigger a test post on startup instead, run:
 

@@ -31,8 +31,11 @@ python bot.py
 Two source files plus a Markdown content database:
 
 - **[bot.py](bot.py)** — Entry point. Builds the `Application`, registers handlers, and schedules the daily job. Key functions:
-  - `pick_item()` — Selects a random item, excluding anything posted in the last 30 days. Falls back to the full list if all items are in the cooldown window.
+  - `pick_item()` — Selects a random item (fact or video), excluding anything posted in the last 30 days. Falls back to the full list if all items are in the cooldown window.
+  - `pick_video()` — Like `pick_item()` but restricted to video items only. Raises `ValueError` if no videos exist.
   - `daily_post()` — Loads state, picks an item, broadcasts to all registered channels, then appends to history.
+  - `broadcast_test()` — Sends a one-off test post (any type) to all channels; not recorded in history.
+  - `broadcast_test_video()` — Sends a one-off test video post to all channels; not recorded in history.
   - `track_membership()` — Listens for `MY_CHAT_MEMBER` events to auto-register/deregister channels when the bot is added or removed.
 
 - **[content.py](content.py)** — Parses `Rush-content.md` into a flat list of dicts. Facts are numbered list items (`1. text`); videos are markdown links under the `## Videos` section (`* [Title](url)`). IDs are `fact_N` and `video_Title_with_underscores`.

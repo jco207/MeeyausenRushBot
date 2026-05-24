@@ -113,7 +113,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("/start - Introduction\n/help - Show this message\n/test - Send a test post to all channels now")
+    await update.message.reply_text(
+        "/start - Introduction\n"
+        "/help - Show this message\n"
+        "/test - Send a test post (fact or video) to all channels now\n"
+        "/test_video - Send a test video link to all channels now"
+    )
 
 
 async def broadcast_test(bot) -> tuple[int, int]:
@@ -138,12 +143,57 @@ async def broadcast_test(bot) -> tuple[int, int]:
     return sent, failed
 
 
+def pick_video(items: list[dict], state: dict) -> dict:
+    videos = [item for item in items if item["type"] == "video"]
+    if not videos:
+        raise ValueError("No video items found in content.")
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
+    recently_posted = {
+        h["item_id"] for h in state["history"]
+        if datetime.datetime.fromisoformat(h["posted_at"]) > cutoff
+    }
+    available = [v for v in videos if v["id"] not in recently_posted]
+    if not available:
+        available = videos
+    return random.choice(available)
+
+
+async def broadcast_test_video(bot) -> tuple[int, int]:
+    state = load_state()
+    if not state["channels"]:
+        logger.info("No channels registered; skipping test-video post.")
+        return 0, 0
+
+    item = pick_video(load_items(), state)
+    text = f"<i>[test-video]</i> {format_message(item)}"
+    sent, failed = 0, 0
+
+    for channel_id in state["channels"]:
+        try:
+            await bot.send_message(chat_id=channel_id, text=text, parse_mode="HTML")
+            sent += 1
+        except Exception as e:
+            logger.error("Test-video send failed for %s: %s", channel_id, e)
+            failed += 1
+
+    logger.info("Test-video post sent to %d channel(s): %s", sent, text)
+    return sent, failed
+
+
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     sent, failed = await broadcast_test(context.bot)
     if sent == 0 and failed == 0:
         await update.message.reply_text("No channels registered.")
     else:
         await update.message.reply_text(f"Test post sent to {sent} channel(s){f', {failed} failed' if failed else ''}.")
+
+
+async def test_video_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    sent, failed = await broadcast_test_video(context.bot)
+    if sent == 0 and failed == 0:
+        await update.message.reply_text("No channels registered.")
+    else:
+        await update.message.reply_text(f"Test video sent to {sent} channel(s){f', {failed} failed' if failed else ''}.")
 
 
 async def startup_test(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -168,6 +218,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("test", test_command))
+    app.add_handler(CommandHandler("test_video", test_video_command))
 
     app.job_queue.run_daily(
         daily_post,
