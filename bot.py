@@ -143,10 +143,14 @@ async def broadcast_test(bot) -> tuple[int, int]:
     return sent, failed
 
 
+def _is_youtube(url: str) -> bool:
+    return "youtube.com" in url or "youtu.be" in url
+
+
 def pick_video(items: list[dict], state: dict) -> dict:
-    videos = [item for item in items if item["type"] == "video"]
+    videos = [item for item in items if item["type"] == "video" and _is_youtube(item["url"])]
     if not videos:
-        raise ValueError("No video items found in content.")
+        raise ValueError("No YouTube video items found in content.")
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
     recently_posted = {
         h["item_id"] for h in state["history"]

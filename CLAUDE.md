@@ -32,7 +32,7 @@ Two source files plus a Markdown content database:
 
 - **[bot.py](bot.py)** — Entry point. Builds the `Application`, registers handlers, and schedules the daily job. Key functions:
   - `pick_item()` — Selects a random item (fact or video), excluding anything posted in the last 30 days. Falls back to the full list if all items are in the cooldown window.
-  - `pick_video()` — Like `pick_item()` but restricted to video items only. Raises `ValueError` if no videos exist.
+  - `pick_video()` — Like `pick_item()` but restricted to YouTube video items only (`youtube.com` or `youtu.be` URLs). Raises `ValueError` if no YouTube videos exist.
   - `daily_post()` — Loads state, picks an item, broadcasts to all registered channels, then appends to history.
   - `broadcast_test()` — Sends a one-off test post (any type) to all channels; not recorded in history.
   - `broadcast_test_video()` — Sends a one-off test video post to all channels; not recorded in history.

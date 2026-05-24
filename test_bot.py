@@ -1,6 +1,6 @@
 import datetime
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from bot import broadcast_test_video, format_message, pick_item, pick_video
 
@@ -9,7 +9,8 @@ FAKE_ITEMS = [
     {"id": "fact_1", "type": "fact", "number": 1, "text": "Rush formed in 1968."},
     {"id": "fact_2", "type": "fact", "number": 2, "text": "Neil Peart joined in 1974."},
     {"id": "video_Live_in_Rio", "type": "video", "title": "Live in Rio", "url": "https://youtu.be/abc"},
-    {"id": "video_Time_Machine", "type": "video", "title": "Time Machine", "url": "https://youtu.be/def"},
+    {"id": "video_Time_Machine", "type": "video", "title": "Time Machine", "url": "https://www.youtube.com/watch?v=def"},
+    {"id": "video_Non_YouTube", "type": "video", "title": "Non YouTube", "url": "https://vimeo.com/xyz"},
 ]
 
 EMPTY_STATE = {"channels": [], "history": []}
@@ -24,9 +25,24 @@ def _recent_history(*item_ids):
 
 
 class TestPickVideo(unittest.TestCase):
-    def test_returns_only_videos(self):
-        item = pick_video(FAKE_ITEMS, EMPTY_STATE)
-        self.assertEqual(item["type"], "video")
+    def test_returns_only_youtube_videos(self):
+        for _ in range(50):
+            item = pick_video(FAKE_ITEMS, EMPTY_STATE)
+            self.assertIn("youtube.com", item["url"] + item["url"].replace("youtu.be", "youtube.com"))
+            self.assertNotEqual(item["id"], "video_Non_YouTube")
+
+    def test_excludes_non_youtube_items(self):
+        for _ in range(50):
+            item = pick_video(FAKE_ITEMS, EMPTY_STATE)
+            self.assertNotEqual(item["id"], "video_Non_YouTube")
+
+    def test_url_is_youtube(self):
+        for _ in range(50):
+            item = pick_video(FAKE_ITEMS, EMPTY_STATE)
+            self.assertTrue(
+                "youtube.com" in item["url"] or "youtu.be" in item["url"],
+                f"Expected a YouTube URL, got: {item['url']}",
+            )
 
     def test_excludes_recently_posted(self):
         state = {"channels": [], "history": _recent_history("video_Live_in_Rio")}
@@ -34,15 +50,23 @@ class TestPickVideo(unittest.TestCase):
             item = pick_video(FAKE_ITEMS, state)
             self.assertNotEqual(item["id"], "video_Live_in_Rio")
 
-    def test_falls_back_when_all_videos_on_cooldown(self):
+    def test_falls_back_when_all_youtube_videos_on_cooldown(self):
         state = {
             "channels": [],
             "history": _recent_history("video_Live_in_Rio", "video_Time_Machine"),
         }
         item = pick_video(FAKE_ITEMS, state)
-        self.assertEqual(item["type"], "video")
+        self.assertTrue(
+            "youtube.com" in item["url"] or "youtu.be" in item["url"],
+            "Fallback should still return a YouTube video.",
+        )
 
-    def test_raises_when_no_videos(self):
+    def test_raises_when_no_youtube_videos(self):
+        no_youtube = [i for i in FAKE_ITEMS if i["type"] != "video" or "vimeo" in i.get("url", "")]
+        with self.assertRaises(ValueError):
+            pick_video(no_youtube, EMPTY_STATE)
+
+    def test_raises_when_no_videos_at_all(self):
         facts_only = [i for i in FAKE_ITEMS if i["type"] == "fact"]
         with self.assertRaises(ValueError):
             pick_video(facts_only, EMPTY_STATE)
@@ -84,15 +108,39 @@ class TestBroadcastTestVideo(unittest.IsolatedAsyncioTestCase):
 
     @patch("bot.load_state", return_value=FULL_STATE)
     @patch("bot.load_items", return_value=FAKE_ITEMS)
-    async def test_sends_video_to_all_channels(self, _, __):
+    async def test_sends_to_all_channels(self, _, __):
         bot = AsyncMock()
         sent, failed = await broadcast_test_video(bot)
         self.assertEqual(sent, 2)
         self.assertEqual(failed, 0)
-        calls = bot.send_message.call_args_list
-        self.assertEqual(len(calls), 2)
-        for call in calls:
+        self.assertEqual(len(bot.send_message.call_args_list), 2)
+
+    @patch("bot.load_state", return_value=FULL_STATE)
+    @patch("bot.load_items", return_value=FAKE_ITEMS)
+    async def test_message_tagged_test_video(self, _, __):
+        bot = AsyncMock()
+        await broadcast_test_video(bot)
+        for call in bot.send_message.call_args_list:
             self.assertIn("[test-video]", call.kwargs["text"])
+
+    @patch("bot.load_state", return_value=FULL_STATE)
+    @patch("bot.load_items", return_value=FAKE_ITEMS)
+    async def test_message_contains_youtube_url(self, _, __):
+        bot = AsyncMock()
+        await broadcast_test_video(bot)
+        text = bot.send_message.call_args_list[0].kwargs["text"]
+        self.assertTrue(
+            "youtube.com" in text or "youtu.be" in text,
+            f"Expected a YouTube URL in message: {text}",
+        )
+
+    @patch("bot.load_state", return_value=FULL_STATE)
+    @patch("bot.load_items", return_value=FAKE_ITEMS)
+    async def test_message_does_not_contain_non_youtube_url(self, _, __):
+        bot = AsyncMock()
+        await broadcast_test_video(bot)
+        for call in bot.send_message.call_args_list:
+            self.assertNotIn("vimeo.com", call.kwargs["text"])
 
     @patch("bot.load_state", return_value=FULL_STATE)
     @patch("bot.load_items", return_value=FAKE_ITEMS)
@@ -102,17 +150,6 @@ class TestBroadcastTestVideo(unittest.IsolatedAsyncioTestCase):
         sent, failed = await broadcast_test_video(bot)
         self.assertEqual(sent, 0)
         self.assertEqual(failed, 2)
-
-    @patch("bot.load_state", return_value=FULL_STATE)
-    @patch("bot.load_items", return_value=FAKE_ITEMS)
-    async def test_message_contains_video_url(self, _, __):
-        bot = AsyncMock()
-        await broadcast_test_video(bot)
-        text = bot.send_message.call_args_list[0].kwargs["text"]
-        self.assertTrue(
-            "youtu.be/abc" in text or "youtu.be/def" in text,
-            f"Expected a video URL in: {text}",
-        )
 
 
 if __name__ == "__main__":
